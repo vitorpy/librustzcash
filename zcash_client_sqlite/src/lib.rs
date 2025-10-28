@@ -1466,6 +1466,10 @@ impl<C: BorrowMut<rusqlite::Connection>, P: consensus::Parameters, CL: Clock, R>
                 for tx in block.transactions() {
                     let tx_ref = wallet::put_tx_meta(wdb.conn.0, tx, block.height())?;
 
+                    // Queue a rescan if this transaction has notes without witnesses
+                    // (e.g., self-created notes from create_proposed_transactions)
+                    wallet::queue_rescan_for_unwitnessed_notes(wdb.conn.0, tx_ref, block.height())?;
+
                     #[cfg(feature = "transparent-inputs")]
                     tx_refs.insert(tx_ref);
 

@@ -3968,6 +3968,69 @@ pub(crate) fn put_tx_meta(
         .map_err(SqliteClientError::from)
 }
 
+/// Checks if a transaction has notes without witnesses (commitment_tree_position IS NULL)
+/// and queues a rescan of the block to build witnesses for those notes.
+///
+/// This is needed for self-created transactions (e.g., from `create_proposed_transactions`)
+/// where notes are inserted into the database before the transaction is mined.
+pub(crate) fn queue_rescan_for_unwitnessed_notes(
+    conn: &rusqlite::Connection,
+    tx_ref: TxRef,
+    block_height: BlockHeight,
+) -> Result<(), SqliteClientError> {
+    // Check if this transaction has any Sapling notes without witnesses
+    let has_unwitnessed_sapling = conn
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM sapling_received_notes
+                WHERE tx = :tx_ref
+                AND commitment_tree_position IS NULL
+            )",
+            named_params! { ":tx_ref": tx_ref.0 },
+            |row| row.get::<_, bool>(0),
+        )?;
+
+    #[cfg(feature = "orchard")]
+    let has_unwitnessed_orchard = conn
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM orchard_received_notes
+                WHERE tx = :tx_ref
+                AND commitment_tree_position IS NULL
+            )",
+            named_params! { ":tx_ref": tx_ref.0 },
+            |row| row.get::<_, bool>(0),
+        )?;
+
+    #[cfg(not(feature = "orchard"))]
+    let has_unwitnessed_orchard = false;
+
+    // If there are any notes without witnesses, queue a rescan of this block
+    if has_unwitnessed_sapling || has_unwitnessed_orchard {
+        use zcash_client_backend::data_api::scanning::{ScanPriority, ScanRange};
+        use std::ops::Range;
+
+        let scan_range = ScanRange::from_parts(
+            Range {
+                start: block_height,
+                end: block_height + 1,
+            },
+            ScanPriority::FoundNote,
+        );
+
+        scanning::insert_queue_entries(conn, std::iter::once(&scan_range))
+            .map_err(SqliteClientError::from)?;
+
+        debug!(
+            "Queued rescan for block {} to build witnesses for self-created notes in tx_ref {}",
+            u32::from(block_height),
+            tx_ref.0
+        );
+    }
+
+    Ok(())
+}
+
 /// Returns the most likely wallet address that corresponds to the protocol-level receiver of a
 /// note or UTXO.
 pub(crate) fn select_receiving_address<P: consensus::Parameters>(
