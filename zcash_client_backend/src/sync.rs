@@ -22,7 +22,7 @@ use tonic::{
 use tracing::{debug, info};
 
 use zcash_keys::encoding::AddressCodec as _;
-use zcash_primitives::merkle_tree::HashSer;
+use zcash_primitives::{block::BlockHash, merkle_tree::HashSer};
 use zcash_protocol::consensus::{BlockHeight, Parameters};
 
 use crate::{
@@ -375,6 +375,15 @@ where
     ChT::ResponseBody: Body<Data = Bytes> + Send + 'static,
     <ChT::ResponseBody as Body>::Error: Into<StdError> + Send,
 {
+    // Lightwalletd treats BlockId { height: 0, hash: [] } as "not specified" due to protobuf defaults.
+    // For block 0, return an empty genesis state instead of querying.
+    if block_height == BlockHeight::from(0) {
+        return Ok(ChainState::empty(
+            BlockHeight::from(0),
+            BlockHash([0u8; 32]),  // Genesis hash placeholder
+        ));
+    }
+
     let tree_state = client
         .get_tree_state(BlockId {
             height: block_height.into(),
