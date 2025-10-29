@@ -274,6 +274,11 @@ unstable-serialization = ["dep:byteorder"]
 ## Exposes the [`data_api::scanning::spanning_tree`] module.
 unstable-spanning-tree = []
 
+## feature to allow building for wasm using wasm-bindgen
+wasm-bindgen = [
+    "time/wasm-bindgen",
+]
+
 [lib]
 bench = false
 
